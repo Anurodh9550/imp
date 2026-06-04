@@ -514,12 +514,12 @@ export default function App() {
     const photoList = (prodForm.images && prodForm.images.length)
       ? prodForm.images
       : (prodForm.image ? [prodForm.image] : []);
-    if (!prodForm.name || !prodForm.price || photoList.length === 0) {
-      triggerToast("Please fill name, price, and add at least one product photo.", "error");
+    if (!prodForm.name || photoList.length === 0) {
+      triggerToast("Please fill the product name and add at least one product photo.", "error");
       return;
     }
 
-    const parsedPrice = parseFloat(prodForm.price);
+    const parsedPrice = parseFloat(prodForm.price || 0);
     const parsedOldPrice = parseFloat(prodForm.oldPrice || 0);
     const parsedWeights = prodForm.weightOptionsInput.split(',').map(w => w.trim()).filter(Boolean);
 
@@ -1979,13 +1979,7 @@ export default function App() {
                     <Lock className="w-8 h-8" />
                   </div>
                   <h1 className="text-xl font-serif font-bold text-stone-900">Secure Admin Command Gate</h1>
-                  <p className="text-xs text-stone-400 mt-2 mb-6">Modify live products, toggle prices, adjust SEO configurations, and manage categories.</p>
-                  
-                  <div className="bg-amber-50 p-4 rounded-xl text-left text-xs text-stone-800 mb-6 border border-amber-200">
-                    <p className="font-bold mb-1">🔑 Dev Credentials Locked Check:</p>
-                    <p>Username: <code className="bg-white px-1 py-0.5 rounded font-mono font-bold">admin</code></p>
-                    <p>Password: <code className="bg-white px-1 py-0.5 rounded font-mono font-bold">impal2026</code></p>
-                  </div>
+                  <p className="text-xs text-stone-400 mt-2 mb-6">Modify live products, adjust SEO configurations, and manage categories.</p>
 
                   {adminError && (
                     <div className="bg-red-50 text-red-800 text-xs p-3.5 rounded-xl border border-red-200 mb-4 font-semibold">
@@ -2285,27 +2279,6 @@ export default function App() {
                                     className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-xs outline-none"
                                   />
                                 </div>
-                                <div>
-                                  <label className="block text-xs font-bold text-stone-600 mb-1">Active Store Price (INR) *</label>
-                                  <input 
-                                    type="number" required
-                                    value={prodForm.price}
-                                    onChange={(e) => setProdForm({...prodForm, price: e.target.value})}
-                                    placeholder="Enter Price Amount"
-                                    className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-xs outline-none font-bold text-emerald-800"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-bold text-stone-600 mb-1">Strike-Through Retail Price (Optional)</label>
-                                  <input 
-                                    type="number"
-                                    value={prodForm.oldPrice}
-                                    onChange={(e) => setProdForm({...prodForm, oldPrice: e.target.value})}
-                                    placeholder="e.g. 75"
-                                    className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-xs outline-none text-stone-400"
-                                  />
-                                </div>
-
                                 <div className="md:col-span-2">
                                   <label className="block text-xs font-bold text-stone-600 mb-1">Product Photos * <span className="text-stone-400 font-normal">(add multiple — first one is the cover)</span></label>
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-white p-4 border border-stone-200 rounded-xl">
