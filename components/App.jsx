@@ -1,6 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
+import {
+  MapPin, Phone, Mail, Search, Filter, ShoppingBag, User, Lock, Plus, Trash2, Edit, Settings,
+  CheckCircle, MessageSquare, Star, Menu, X, ChevronDown, ChevronUp, Shield, Heart, Sparkles,
+  TrendingUp, DollarSign, Globe, Truck, Eye, LogOut, Clock, ArrowRight, Check, Image as ImageIcon,
+  ChevronRight, RefreshCw, Smartphone, Upload, Trash, Info, Share2, HelpCircle, EyeOff, BarChart2,
+  FileText, Award
+} from 'lucide-react';
+import { api } from '@/lib/api';
 
 const STORAGE_PREFIX = 'impal:';
 
@@ -42,13 +50,6 @@ function usePersistedState(key, initialValue) {
 
   return [value, setValue];
 }
-import { 
-  MapPin, Phone, Mail, Search, Filter, ShoppingBag, User, Lock, Plus, Trash2, Edit, Settings, 
-  CheckCircle, MessageSquare, Star, Menu, X, ChevronDown, ChevronUp, Shield, Heart, Sparkles, 
-  TrendingUp, DollarSign, Globe, Truck, Eye, LogOut, Clock, ArrowRight, Check, Image as ImageIcon,
-  ChevronRight, RefreshCw, Smartphone, Upload, Trash, Info, Share2, HelpCircle, EyeOff, BarChart2,
-  FileText, Award
-} from 'lucide-react';
 
 const initialProducts = [
   {
@@ -267,6 +268,7 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeFaq, setActiveFaq] = useState(null);
   const [selectedProductDetails, setSelectedProductDetails] = useState(null);
+  const [quickViewImageIndex, setQuickViewImageIndex] = useState(0);
   const [selectedCardWeights, setSelectedCardWeights] = useState({});
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(false);
 
@@ -298,6 +300,7 @@ export default function App() {
     oldPrice: '', 
     stock: 100, 
     image: '', 
+    images: [],
     isFeatured: false, 
     isVisible: true,
     tag: ''
@@ -318,6 +321,60 @@ export default function App() {
 
   const [languagePref, setLanguagePref] = useState('english'); // 'english' or 'bilingual'
   const [colorTheme, setColorTheme] = useState('forest-gold'); // 'forest-gold' or 'vintage-brown'
+
+  // Backend connectivity: when true, the app reads/writes through the Django API.
+  const [backendOnline, setBackendOnline] = useState(false);
+  const [categoryIdMap, setCategoryIdMap] = useState({}); // { "Sugar": 1, "Poha": 2 }
+  const [settingsId, setSettingsId] = useState(null);
+
+  // Try to hydrate everything from the backend on mount. On any failure we stay
+  // in offline mode and keep using the locally persisted (localStorage) data.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [cats, prods, gal, tests, siteSettings] = await Promise.all([
+          api.getCategories(),
+          api.getProducts(),
+          api.getGallery(),
+          api.getTestimonials(),
+          api.getSettings(),
+        ]);
+        if (cancelled) return;
+
+        const idMap = {};
+        cats.forEach((c) => { idMap[c.name] = c.id; });
+        setCategoryIdMap(idMap);
+        setCategories(cats.map((c) => c.name));
+        setProducts(prods);
+        setGallery(gal);
+        setTestimonials(tests);
+        if (siteSettings) {
+          setSettingsId(siteSettings._id);
+          const { _id, ...rest } = siteSettings;
+          setSettings((prev) => ({ ...prev, ...rest }));
+        }
+        setBackendOnline(true);
+
+        // Authenticated extras (orders + enquiries) only if a token exists.
+        if (isAdminAuthenticated) {
+          try {
+            const [ords, enqs] = await Promise.all([api.getOrders(), api.getEnquiries()]);
+            if (!cancelled) {
+              setOrders(ords);
+              setEnquiries(enqs);
+            }
+          } catch {
+            // token likely expired; keep local
+          }
+        }
+      } catch {
+        if (!cancelled) setBackendOnline(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -364,15 +421,14 @@ export default function App() {
 
   const cartTotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
 
-  const handleInquirySubmit = (e) => {
+  const handleInquirySubmit = async (e) => {
     e.preventDefault();
     if (!contactName || !contactPhone || !contactEmail) {
       triggerToast("Please fill in name, phone, and email.", "error");
       return;
     }
 
-    const newEnquiry = {
-      id: enquiries.length + 1,
+    const payload = {
       name: contactName,
       business: contactBusiness || "Retail Customer",
       phone: contactPhone,
@@ -380,14 +436,22 @@ export default function App() {
       city: contactCity || "Not Provided",
       state: contactState || "Not Provided",
       message: contactMessage,
-      status: "Pending",
-      date: new Date().toISOString().split('T')[0],
       type: contactType
     };
 
-    setEnquiries([newEnquiry, ...enquiries]);
-    triggerToast(`Thank you, ${contactName}! Your enquiry is successfully registered in our secure database.`);
-    
+    if (backendOnline) {
+      try {
+        const saved = await api.createEnquiry(payload);
+        setEnquiries([saved, ...enquiries]);
+      } catch (err) {
+        triggerToast(`Could not submit enquiry: ${err.message}`, "error");
+        return;
+      }
+    } else {
+      setEnquiries([{ ...payload, id: enquiries.length + 1, status: "Pending", date: new Date().toISOString().split('T')[0] }, ...enquiries]);
+    }
+
+    triggerToast(`Thank you, ${contactName}! Your enquiry has been registered.`);
     setContactName('');
     setContactBusiness('');
     setContactPhone('');
@@ -397,29 +461,61 @@ export default function App() {
     setContactMessage('');
   };
 
-  const handleAdminLogin = (e) => {
+  const handleAdminLogin = async (e) => {
     e.preventDefault();
+
+    // Preferred path: real JWT auth against the Django backend.
+    if (backendOnline) {
+      try {
+        await api.login(adminUsername, adminPassword);
+        setIsAdminAuthenticated(true);
+        setAdminError('');
+        triggerToast("JWT authorized. Welcome back, Administrator.");
+        try {
+          const [ords, enqs] = await Promise.all([api.getOrders(), api.getEnquiries()]);
+          setOrders(ords);
+          setEnquiries(enqs);
+        } catch {
+          // non-fatal
+        }
+        return;
+      } catch {
+        setAdminError("Access Denied. Invalid credentials.");
+        triggerToast("Authentication Failed", "error");
+        return;
+      }
+    }
+
+    // Offline fallback (no backend reachable): demo credentials.
     if (adminUsername === 'admin' && adminPassword === 'impal2026') {
       setIsAdminAuthenticated(true);
       setAdminError('');
-      triggerToast("Secure Token Authorized. Welcome back, Administrator.");
+      triggerToast("Offline mode: demo admin session started.");
     } else {
       setAdminError("Access Denied. Invalid master key.");
       triggerToast("Authentication Failed", "error");
     }
   };
 
+  useEffect(() => {
+    setQuickViewImageIndex(0);
+  }, [selectedProductDetails]);
+
   const handleAdminLogout = () => {
+    api.logout();
     setIsAdminAuthenticated(false);
     setAdminUsername('');
     setAdminPassword('');
-    triggerToast("Logged out securely from Corporate Server.");
+    triggerToast("Logged out securely.");
   };
 
-  const handleSaveProduct = (e) => {
+  const handleSaveProduct = async (e) => {
     e.preventDefault();
-    if (!prodForm.name || !prodForm.price || !prodForm.image) {
-      triggerToast("Please fill name, price, and provide a product image.", "error");
+    const photoList = (prodForm.images && prodForm.images.length)
+      ? prodForm.images
+      : (prodForm.image ? [prodForm.image] : []);
+    if (!prodForm.name || !prodForm.price || photoList.length === 0) {
+      triggerToast("Please fill name, price, and add at least one product photo.", "error");
       return;
     }
 
@@ -427,49 +523,66 @@ export default function App() {
     const parsedOldPrice = parseFloat(prodForm.oldPrice || 0);
     const parsedWeights = prodForm.weightOptionsInput.split(',').map(w => w.trim()).filter(Boolean);
 
+    const draft = {
+      name: prodForm.name,
+      category: prodForm.category,
+      weight: parsedWeights[0] || prodForm.weight,
+      weights: parsedWeights,
+      description: prodForm.description,
+      price: parsedPrice,
+      oldPrice: parsedOldPrice || null,
+      stock: parseInt(prodForm.stock),
+      image: photoList[0],
+      images: photoList,
+      isFeatured: prodForm.isFeatured,
+      isVisible: prodForm.isVisible,
+      tag: prodForm.tag
+    };
+
+    if (backendOnline) {
+      try {
+        const categoryId = categoryIdMap[prodForm.category];
+        if (editingProductId) {
+          const updated = await api.updateProduct(editingProductId, draft, categoryId);
+          setProducts(products.map(p => p.id === editingProductId ? updated : p));
+          triggerToast("Product updated in database!");
+        } else {
+          const created = await api.createProduct(draft, categoryId);
+          setProducts([...products, created]);
+          triggerToast("New product saved to database!");
+        }
+        resetProductForm();
+        return;
+      } catch (err) {
+        triggerToast(`Save failed: ${err.message}`, "error");
+        return;
+      }
+    }
+
+    // Offline fallback (local state only)
     if (editingProductId) {
-      setProducts(products.map(p => p.id === editingProductId ? {
-        ...p,
-        name: prodForm.name,
-        category: prodForm.category,
-        weight: parsedWeights[0] || prodForm.weight,
-        weights: parsedWeights,
-        description: prodForm.description,
-        price: parsedPrice,
-        oldPrice: parsedOldPrice || null,
-        stock: parseInt(prodForm.stock),
-        image: prodForm.image,
-        isFeatured: prodForm.isFeatured,
-        isVisible: prodForm.isVisible,
-        tag: prodForm.tag
-      } : p));
-      triggerToast("Product details updated across public grids!");
+      setProducts(products.map(p => p.id === editingProductId ? { ...p, ...draft } : p));
+      triggerToast("Product details updated locally!");
     } else {
       const newProduct = {
+        ...draft,
         id: products.length + 1,
-        name: prodForm.name,
-        category: prodForm.category,
-        weight: parsedWeights[0] || prodForm.weight,
-        weights: parsedWeights,
-        description: prodForm.description,
-        price: parsedPrice,
-        oldPrice: parsedOldPrice || null,
-        stock: parseInt(prodForm.stock),
-        image: prodForm.image,
         rating: 5.0,
         reviews: 0,
-        isFeatured: prodForm.isFeatured,
-        isVisible: prodForm.isVisible,
         tag: prodForm.tag || "Fresh"
       };
       setProducts([...products, newProduct]);
-      triggerToast("New premium SKU added to database successfully!");
+      triggerToast("New SKU added locally!");
     }
 
+    resetProductForm();
+  };
+
+  const resetProductForm = () => {
     setEditingProductId(null);
     setProdForm({ 
       name: '', category: categories[0] || 'Sugar', weight: '1kg', weightOptionsInput: '500g, 1kg, 5kg',
-      description: '', price: '', oldPrice: '', stock: 100, image: '', isFeatured: false, isVisible: true, tag: '' 
+      description: '', price: '', oldPrice: '', stock: 100, image: '', images: [], isFeatured: false, isVisible: true, tag: '' 
     });
   };
 
@@ -485,87 +598,188 @@ export default function App() {
       oldPrice: p.oldPrice || '',
       stock: p.stock,
       image: p.image,
+      images: (p.images && p.images.length) ? p.images : (p.image ? [p.image] : []),
       isFeatured: p.isFeatured || false,
       isVisible: p.isVisible !== false,
       tag: p.tag || ''
     });
   };
 
-  const deleteProduct = (id) => {
+  const deleteProduct = async (id) => {
+    if (backendOnline) {
+      try {
+        await api.deleteProduct(id);
+      } catch (err) {
+        triggerToast(`Delete failed: ${err.message}`, "error");
+        return;
+      }
+    }
     setProducts(products.filter(p => p.id !== id));
-    triggerToast("Product securely expunged from stores database.", "error");
+    triggerToast("Product removed from database.", "error");
   };
 
-  const handlePhotoUpload = (e, targetForm) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (targetForm === 'product') {
-          setProdForm(prev => ({ ...prev, image: reader.result }));
-          triggerToast("SKU illustration processed successfully.");
-        } else if (targetForm === 'gallery') {
-          setNewGalleryImage(reader.result);
-          triggerToast("Landscape snap buffered.");
-        }
-      };
-      reader.readAsDataURL(file);
+  const applyUploadedImage = (targetForm, url) => {
+    if (targetForm === 'product') {
+      setProdForm(prev => {
+        const nextImages = [...(prev.images || []), url];
+        return { ...prev, images: nextImages, image: prev.image || url };
+      });
+    } else if (targetForm === 'gallery') {
+      setNewGalleryImage(url);
     }
   };
 
-  const handleAddGalleryItem = (e) => {
+  const addProductImageUrl = (url) => {
+    const clean = (url || '').trim();
+    if (!clean) return;
+    setProdForm(prev => {
+      if ((prev.images || []).includes(clean)) return prev;
+      const nextImages = [...(prev.images || []), clean];
+      return { ...prev, images: nextImages, image: prev.image || clean };
+    });
+  };
+
+  const removeProductImage = (index) => {
+    setProdForm(prev => {
+      const nextImages = (prev.images || []).filter((_, i) => i !== index);
+      return { ...prev, images: nextImages, image: nextImages[0] || '' };
+    });
+  };
+
+  const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const handlePhotoUpload = async (e, targetForm) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    // For gallery we only keep a single image; products support many.
+    const fileList = targetForm === 'product' ? files : [files[0]];
+
+    for (const file of fileList) {
+      // Preferred: upload to Cloudinary through the backend (requires admin token).
+      if (backendOnline) {
+        try {
+          const url = await api.uploadImage(file);
+          applyUploadedImage(targetForm, url);
+          continue;
+        } catch (err) {
+          triggerToast(`Cloudinary upload failed (${err.message}). Stored locally instead.`, "error");
+          // fall through to base64 fallback for this file
+        }
+      }
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        applyUploadedImage(targetForm, dataUrl);
+      } catch {
+        triggerToast("Could not read one of the selected files.", "error");
+      }
+    }
+
+    triggerToast(
+      fileList.length > 1
+        ? `${fileList.length} photos added.`
+        : "Photo added.",
+    );
+    // Allow re-selecting the same file(s) again.
+    e.target.value = '';
+  };
+
+  const handleAddGalleryItem = async (e) => {
     e.preventDefault();
     if (!newGalleryTitle || !newGalleryImage) {
       triggerToast("Required details are missing.", "error");
       return;
     }
-    const newItem = {
-      id: gallery.length + 1,
+    const draft = {
       title: newGalleryTitle,
       description: newGalleryDesc || "Premium infrastructure image.",
       image: newGalleryImage,
       category: newGalleryCategory
     };
-    setGallery([...gallery, newItem]);
+
+    if (backendOnline) {
+      try {
+        const saved = await api.createGallery(draft);
+        setGallery([...gallery, saved]);
+      } catch (err) {
+        triggerToast(`Could not add image: ${err.message}`, "error");
+        return;
+      }
+    } else {
+      setGallery([...gallery, { ...draft, id: gallery.length + 1 }]);
+    }
+
     setNewGalleryTitle('');
     setNewGalleryDesc('');
     setNewGalleryImage('');
-    triggerToast("New gallery visual published live!");
+    triggerToast("New gallery visual published!");
   };
 
-  const deleteGalleryItem = (id) => {
+  const deleteGalleryItem = async (id) => {
+    if (backendOnline) {
+      try {
+        await api.deleteGallery(id);
+      } catch (err) {
+        triggerToast(`Delete failed: ${err.message}`, "error");
+        return;
+      }
+    }
     setGallery(gallery.filter(item => item.id !== id));
-    triggerToast("Photo removed from live registry.");
+    triggerToast("Photo removed from registry.");
   };
 
-  const handleAddTestimonial = (e) => {
+  const handleAddTestimonial = async (e) => {
     e.preventDefault();
     if (!newTestimonialName || !newTestimonialQuote) {
       triggerToast("Provide author name and review content.", "error");
       return;
     }
-    const newReview = {
-      id: testimonials.length + 1,
+    const draft = {
       name: newTestimonialName,
       role: newTestimonialRole || "Verified Buyer",
       location: newTestimonialLocation || "India",
       rating: parseInt(newTestimonialRating),
       quote: newTestimonialQuote
     };
-    setTestimonials([...testimonials, newReview]);
+
+    if (backendOnline) {
+      try {
+        const saved = await api.createTestimonial(draft);
+        setTestimonials([...testimonials, saved]);
+      } catch (err) {
+        triggerToast(`Could not add review: ${err.message}`, "error");
+        return;
+      }
+    } else {
+      setTestimonials([...testimonials, { ...draft, id: testimonials.length + 1 }]);
+    }
+
     setNewTestimonialName('');
     setNewTestimonialRole('');
     setNewTestimonialLocation('');
     setNewTestimonialQuote('');
-    triggerToast("Testimonial review appended live!");
+    triggerToast("Testimonial review appended!");
   };
 
-  const deleteTestimonial = (id) => {
+  const deleteTestimonial = async (id) => {
+    if (backendOnline) {
+      try {
+        await api.deleteTestimonial(id);
+      } catch (err) {
+        triggerToast(`Delete failed: ${err.message}`, "error");
+        return;
+      }
+    }
     setTestimonials(testimonials.filter(t => t.id !== id));
-    triggerToast("Review securely hidden from public storefront.");
+    triggerToast("Review hidden from storefront.");
   };
 
-  const handleAddCategory = (e) => {
+  const handleAddCategory = async (e) => {
     e.preventDefault();
     if (!newCategoryInput.trim()) return;
     const categoryName = newCategoryInput.trim();
@@ -573,19 +787,67 @@ export default function App() {
       triggerToast("Category already exists.", "error");
       return;
     }
+
+    if (backendOnline) {
+      try {
+        const saved = await api.createCategory(categoryName);
+        setCategoryIdMap({ ...categoryIdMap, [saved.name]: saved.id });
+      } catch (err) {
+        triggerToast(`Could not add category: ${err.message}`, "error");
+        return;
+      }
+    }
+
     setCategories([...categories, categoryName]);
     setNewCategoryInput('');
-    triggerToast(`"${categoryName}" added to active categories list!`);
+    triggerToast(`"${categoryName}" added to categories!`);
   };
 
-  const deleteCategory = (catToDelete) => {
+  const deleteCategory = async (catToDelete) => {
+    if (backendOnline && categoryIdMap[catToDelete]) {
+      try {
+        await api.deleteCategory(categoryIdMap[catToDelete]);
+        const next = { ...categoryIdMap };
+        delete next[catToDelete];
+        setCategoryIdMap(next);
+      } catch (err) {
+        triggerToast(`Delete failed (category may have products): ${err.message}`, "error");
+        return;
+      }
+    }
     setCategories(categories.filter(c => c !== catToDelete));
     triggerToast(`Category "${catToDelete}" deleted.`);
   };
 
-  const handleCheckoutSubmit = (e) => {
+  const handleCheckoutSubmit = async (e) => {
     e.preventDefault();
     if (cart.length === 0) return;
+
+    if (backendOnline) {
+      try {
+        const payload = {
+          customer_name: contactName || "Guest Customer",
+          customer_phone: contactPhone || "",
+          customer_email: contactEmail || "",
+          items: cart.map(item => ({
+            product: typeof item.id === 'number' ? item.id : null,
+            product_name: item.name,
+            chosen_weight: item.chosenWeight,
+            quantity: item.quantity,
+            unit_price: item.price,
+          })),
+        };
+        const saved = await api.createOrder(payload);
+        setOrders([saved, ...orders]);
+        setCart([]);
+        setCurrentPage('tracking');
+        triggerToast("Order placed in database! Directing to tracker.", "success");
+        return;
+      } catch (err) {
+        triggerToast(`Checkout failed: ${err.message}`, "error");
+        return;
+      }
+    }
 
     const orderId = `IMP-${Math.floor(100000 + Math.random() * 900000)}`;
     const newOrder = {
@@ -600,10 +862,21 @@ export default function App() {
     setOrders([newOrder, ...orders]);
     setCart([]);
     setCurrentPage('tracking');
-    triggerToast("Mock Razorpay Payment Successful! Directing to real-time tracker.", "success");
+    triggerToast("Mock payment successful! Directing to real-time tracker.", "success");
   };
 
-  const updateOrderStatus = (orderId, newStatus) => {
+  const updateOrderStatus = async (orderId, newStatus) => {
+    if (backendOnline) {
+      try {
+        const updated = await api.updateOrderStatus(orderId, newStatus);
+        setOrders(orders.map(o => o.orderId === orderId ? updated : o));
+        triggerToast(`Order ${orderId} → ${newStatus}`);
+        return;
+      } catch (err) {
+        triggerToast(`Status update failed: ${err.message}`, "error");
+        return;
+      }
+    }
     setOrders(orders.map(o => {
       if (o.orderId !== orderId) return o;
       const timeline = o.timeline.includes(newStatus) ? o.timeline : [...o.timeline, newStatus];
@@ -619,26 +892,29 @@ export default function App() {
 
   // ==================== Real-Time Analytics (computed from live data) ====================
   const analytics = useMemo(() => {
-    const totalRevenue = orders.reduce((sum, o) => sum + (o.total || 0), 0);
-    const taxCollected = Math.round(totalRevenue * 0.05);
-    const grossWithTax = totalRevenue + taxCollected;
-    const ordersByStatus = orders.reduce((acc, o) => {
-      acc[o.status] = (acc[o.status] || 0) + 1;
+    const totalProducts = products.length;
+    const visibleProducts = products.filter(p => p.isVisible !== false).length;
+    const featuredProducts = products.filter(p => p.isFeatured).length;
+    const lowStock = products.filter(p => (p.stock ?? 0) < 50);
+    const productsByCategory = products.reduce((acc, p) => {
+      acc[p.category] = (acc[p.category] || 0) + 1;
       return acc;
     }, {});
-    const productSales = {};
-    orders.forEach(o => {
-      (o.items || []).forEach(it => {
-        productSales[it.name] = (productSales[it.name] || 0) + it.quantity;
-      });
-    });
-    const topProducts = Object.entries(productSales)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
-    const lowStock = products.filter(p => (p.stock ?? 0) < 50);
+    const enquiriesByStatus = enquiries.reduce((acc, en) => {
+      acc[en.status] = (acc[en.status] || 0) + 1;
+      return acc;
+    }, {});
     const pendingEnquiries = enquiries.filter(en => en.status === 'Pending').length;
-    return { totalRevenue, taxCollected, grossWithTax, ordersByStatus, topProducts, lowStock, pendingEnquiries };
-  }, [orders, products, enquiries]);
+    return {
+      totalProducts,
+      visibleProducts,
+      featuredProducts,
+      lowStock,
+      productsByCategory,
+      enquiriesByStatus,
+      pendingEnquiries,
+    };
+  }, [products, enquiries]);
 
   const filteredProducts = products.filter(p => {
     // Hide invisible items for public users, always show for admins in dashboard
@@ -710,23 +986,8 @@ export default function App() {
               </button>
             </nav>
 
-            {/* Right Header Controls (Cart, Search, Menu) */}
+            {/* Right Header Controls (Search, Menu) */}
             <div className="flex items-center space-x-3">
-              
-              {settings.ecommerceActive && (
-                <button 
-                  onClick={() => setCurrentPage('cart')}
-                  className="relative p-2.5 rounded-full text-stone-700 hover:text-emerald-800 hover:bg-stone-50 transition-all"
-                  aria-label="Cart"
-                >
-                  <ShoppingBag className="w-5 h-5" />
-                  {cart.length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-amber-500 text-stone-900 text-xs font-extrabold w-5 h-5 flex items-center justify-center rounded-full border border-white animate-bounce">
-                      {cart.reduce((total, item) => total + item.quantity, 0)}
-                    </span>
-                  )}
-                </button>
-              )}
 
               {orders.length > 0 && (
                 <button 
@@ -824,7 +1085,7 @@ export default function App() {
                       <Sparkles className="w-3.5 h-3.5" />
                       <span>100% Clean Refinery Sourced</span>
                     </span>
-                    <h1 className="text-4xl sm:text-5xl lg:text-6xl font-serif font-black tracking-tight leading-tight">
+                    <h1 className="text-4xl sm:text-5xl lg:text-6xl font-serif font-black tracking-tight leading-tight uppercase">
                       {settings.tagline}
                     </h1>
                     <p className="text-base text-emerald-100 max-w-xl font-light leading-relaxed">
@@ -890,19 +1151,13 @@ export default function App() {
                       
                       <h3 className="text-lg font-serif font-bold text-white">Traditional Medium Poha</h3>
                       <p className="text-xs text-emerald-100 mt-2 mb-4 line-clamp-2">The ultimate breakfast champion of Central India. Light, nutrition-locked, fluffy rice flakes.</p>
-                      
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-amber-300 text-2xl font-black">₹55</span>
-                          <span className="text-emerald-300 text-[10px] ml-1">/ 1kg pack</span>
-                        </div>
-                        <button 
-                          onClick={() => addToCart(products.find(p => p.id === 4) || products[0])}
-                          className="bg-white hover:bg-amber-500 text-emerald-950 hover:text-stone-950 font-bold px-4 py-2 rounded-xl text-xs uppercase tracking-wider transition-colors"
-                        >
-                          Quick Add
-                        </button>
-                      </div>
+
+                      <button 
+                        onClick={() => setCurrentPage('products')}
+                        className="w-full bg-white hover:bg-amber-500 text-emerald-950 hover:text-stone-950 font-bold px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider transition-colors"
+                      >
+                        View Products
+                      </button>
                     </div>
                   </div>
 
@@ -1039,22 +1294,6 @@ export default function App() {
                             {p.tag || p.category}
                           </span>
 
-                          {isAdminAuthenticated && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                startEditProduct(p);
-                                setCurrentPage('admin');
-                                setActiveAdminTab('products');
-                                triggerToast(`Selected SKU: ${p.name}`);
-                              }}
-                              className="absolute top-3 right-3 bg-amber-500 hover:bg-amber-400 text-stone-950 text-[10px] font-extrabold px-3 py-1.5 rounded-full uppercase tracking-wide shadow-md z-20 flex items-center space-x-1"
-                            >
-                              <Edit className="w-3 h-3" />
-                              <span>Edit SKU</span>
-                            </button>
-                          )}
-                          
                           <div className="h-44 overflow-hidden bg-white">
                             <img 
                               src={p.image} 
@@ -1104,51 +1343,14 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="mt-4 pt-3 border-t border-stone-200/50 flex items-center justify-between">
-                            <div>
-                              {settings.displayPublicPrices ? (
-                                <>
-                                  <span className="text-emerald-800 text-lg font-extrabold">₹{p.price}</span>
-                                  {p.oldPrice && (
-                                    <span className="text-stone-400 text-xs line-through ml-2">₹{p.oldPrice}</span>
-                                  )}
-                                </>
-                              ) : (
-                                <span className="text-emerald-800 text-xs font-bold">Inquire for Price</span>
-                              )}
-                            </div>
-                            
-                            <div className="flex space-x-1">
-                              <button
-                                onClick={() => {
-                                  setSelectedProductDetails(p);
-                                  triggerToast("Opening Quick View", "info");
-                                }}
-                                className="p-1.5 bg-stone-100 hover:bg-stone-200 rounded-lg text-stone-600"
-                                title="Quick View"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                              {settings.ecommerceActive ? (
-                                <button
-                                  onClick={() => addToCart(p, selectedWeight)}
-                                  className="bg-emerald-800 hover:bg-emerald-900 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
-                                >
-                                  Add
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setContactType('Inquiry');
-                                    setContactMessage(`Interested in obtaining price quotes for ${p.name} (${selectedWeight}).`);
-                                    setCurrentPage('contact');
-                                  }}
-                                  className="bg-amber-500 hover:bg-amber-600 text-stone-950 px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
-                                >
-                                  Inquire
-                                </button>
-                              )}
-                            </div>
+                          <div className="mt-4 pt-3 border-t border-stone-200/50">
+                            <button
+                              onClick={() => setSelectedProductDetails(p)}
+                              className="w-full bg-emerald-800 hover:bg-emerald-900 text-white px-3 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-1"
+                            >
+                              <Eye className="w-4 h-4" />
+                              <span>View Details</span>
+                            </button>
                           </div>
 
                         </div>
@@ -1569,49 +1771,14 @@ export default function App() {
                             </div>
                           </div>
 
-                          <div className="pt-4 border-t border-stone-100 flex items-center justify-between">
-                            <div>
-                              {settings.displayPublicPrices ? (
-                                <>
-                                  <span className="text-emerald-800 text-xl font-black">₹{p.price}</span>
-                                  {p.oldPrice && (
-                                    <span className="text-stone-400 text-xs line-through ml-2">₹{p.oldPrice}</span>
-                                  )}
-                                </>
-                              ) : (
-                                <span className="text-stone-600 text-xs font-bold">Inquire Pricing</span>
-                              )}
-                            </div>
-
-                            <div className="flex space-x-2">
-                              <button
-                                onClick={() => setSelectedProductDetails(p)}
-                                className="px-3 py-2 bg-stone-100 hover:bg-stone-200 rounded-lg text-xs font-semibold text-stone-700"
-                              >
-                                View Details
-                              </button>
-
-                              {settings.ecommerceActive ? (
-                                <button
-                                  onClick={() => addToCart(p, selectedWeight)}
-                                  className="bg-emerald-800 hover:bg-emerald-900 text-white px-4 py-2 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center space-x-1"
-                                >
-                                  <ShoppingBag className="w-3.5 h-3.5" />
-                                  <span>Add</span>
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setContactType('Inquiry');
-                                    setContactMessage(`Enquiring about bulk delivery and price quotes for ${p.name} (${selectedWeight}).`);
-                                    setCurrentPage('contact');
-                                  }}
-                                  className="bg-amber-500 hover:bg-amber-600 text-stone-950 px-4 py-2 rounded-lg text-xs font-bold transition-all"
-                                >
-                                  Inquire Pricing
-                                </button>
-                              )}
-                            </div>
+                          <div className="pt-4 border-t border-stone-100">
+                            <button
+                              onClick={() => setSelectedProductDetails(p)}
+                              className="w-full px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center space-x-1"
+                            >
+                              <Eye className="w-4 h-4" />
+                              <span>View Details</span>
+                            </button>
                           </div>
 
                         </div>
@@ -1893,14 +2060,6 @@ export default function App() {
                         <span>Dashboard</span>
                       </button>
 
-                      <button
-                        onClick={() => setActiveAdminTab('orders')}
-                        className={`w-full text-left px-4 py-2.5 rounded-xl text-xs font-bold uppercase transition-all flex items-center space-x-2 ${activeAdminTab === 'orders' ? 'bg-emerald-800 text-white shadow' : 'text-stone-600 hover:bg-stone-50'}`}
-                      >
-                        <Truck className="w-4 h-4" />
-                        <span>Orders ({orders.length})</span>
-                      </button>
-
                       <span className="block px-4 py-2 pt-4 text-[10px] font-bold text-stone-400 uppercase tracking-wider">Configure Stores</span>
 
                       <button
@@ -1981,19 +2140,19 @@ export default function App() {
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Revenue</span>
-                                <DollarSign className="w-4 h-4 text-emerald-700" />
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Products</span>
+                                <ShoppingBag className="w-4 h-4 text-emerald-700" />
                               </div>
-                              <span className="block text-2xl font-serif font-black text-stone-900">₹{analytics.grossWithTax}</span>
-                              <span className="text-[10px] text-stone-400">Incl. 5% GST</span>
+                              <span className="block text-2xl font-serif font-black text-stone-900">{analytics.totalProducts}</span>
+                              <span className="text-[10px] text-stone-400">{analytics.visibleProducts} visible on site</span>
                             </div>
                             <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm">
                               <div className="flex items-center justify-between mb-2">
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Orders</span>
-                                <ShoppingBag className="w-4 h-4 text-amber-600" />
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Categories</span>
+                                <Filter className="w-4 h-4 text-amber-600" />
                               </div>
-                              <span className="block text-2xl font-serif font-black text-stone-900">{orders.length}</span>
-                              <span className="text-[10px] text-stone-400">{analytics.ordersByStatus['Awaiting Shipment'] || 0} pending dispatch</span>
+                              <span className="block text-2xl font-serif font-black text-stone-900">{categories.length}</span>
+                              <span className="text-[10px] text-stone-400">{analytics.featuredProducts} featured products</span>
                             </div>
                             <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-sm">
                               <div className="flex items-center justify-between mb-2">
@@ -2015,18 +2174,18 @@ export default function App() {
 
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
-                              <h3 className="text-sm font-bold text-stone-900 mb-4">Top Selling Products</h3>
-                              {analytics.topProducts.length === 0 ? (
-                                <p className="text-xs text-stone-400 py-6 text-center">No sales recorded yet. Place a test order to see analytics.</p>
+                              <h3 className="text-sm font-bold text-stone-900 mb-4">Products by Category</h3>
+                              {Object.keys(analytics.productsByCategory).length === 0 ? (
+                                <p className="text-xs text-stone-400 py-6 text-center">No products yet.</p>
                               ) : (
                                 <ul className="space-y-3">
-                                  {analytics.topProducts.map(([name, qty], idx) => (
-                                    <li key={name} className="flex items-center justify-between text-xs">
+                                  {Object.entries(analytics.productsByCategory).map(([cat, count]) => (
+                                    <li key={cat} className="flex items-center justify-between text-xs">
                                       <span className="flex items-center space-x-2">
-                                        <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-[10px]">{idx + 1}</span>
-                                        <span className="text-stone-700 truncate">{name}</span>
+                                        <span className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-[10px]">{cat[0]}</span>
+                                        <span className="text-stone-700 truncate">{cat}</span>
                                       </span>
-                                      <span className="font-bold text-amber-700">{qty} units</span>
+                                      <span className="font-bold text-amber-700">{count} products</span>
                                     </li>
                                   ))}
                                 </ul>
@@ -2034,18 +2193,18 @@ export default function App() {
                             </div>
 
                             <div className="bg-white p-6 rounded-2xl border border-stone-200 shadow-sm">
-                              <h3 className="text-sm font-bold text-stone-900 mb-4">Recent Orders</h3>
-                              {orders.length === 0 ? (
-                                <p className="text-xs text-stone-400 py-6 text-center">No orders yet.</p>
+                              <h3 className="text-sm font-bold text-stone-900 mb-4">Recent Enquiries</h3>
+                              {enquiries.length === 0 ? (
+                                <p className="text-xs text-stone-400 py-6 text-center">No enquiries yet.</p>
                               ) : (
                                 <ul className="space-y-2">
-                                  {orders.slice(0, 5).map(o => (
-                                    <li key={o.orderId} className="flex items-center justify-between text-xs p-2 bg-stone-50 rounded-lg">
+                                  {enquiries.slice(0, 5).map(en => (
+                                    <li key={en.id} className="flex items-center justify-between text-xs p-2 bg-stone-50 rounded-lg">
                                       <div className="min-w-0">
-                                        <span className="font-mono font-bold text-emerald-800 block">{o.orderId}</span>
-                                        <span className="text-stone-400 text-[10px]">{o.date} · {o.items?.length || 0} items</span>
+                                        <span className="font-bold text-stone-800 block truncate">{en.name}</span>
+                                        <span className="text-stone-400 text-[10px]">{en.type} · {en.date}</span>
                                       </div>
-                                      <span className="font-bold text-stone-900">₹{o.total}</span>
+                                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${en.status === 'Pending' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>{en.status}</span>
                                     </li>
                                   ))}
                                 </ul>
@@ -2067,81 +2226,6 @@ export default function App() {
                                   </div>
                                 ))}
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* SUB-TAB: ORDERS MANAGEMENT */}
-                      {activeAdminTab === 'orders' && (
-                        <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-stone-200 space-y-6">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h3 className="text-base font-bold text-stone-900">Customer Orders</h3>
-                              <p className="text-xs text-stone-400">Track, update status, and review every checkout placed on the storefront.</p>
-                            </div>
-                            <span className="text-xs font-bold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
-                              {orders.length} total
-                            </span>
-                          </div>
-
-                          {orders.length === 0 ? (
-                            <div className="text-center py-12 text-xs text-stone-400 border border-dashed border-stone-200 rounded-2xl">
-                              No orders yet. Once a customer checks out, the order will appear here.
-                            </div>
-                          ) : (
-                            <div className="space-y-4">
-                              {orders.map(o => (
-                                <div key={o.orderId} className="border border-stone-200 rounded-2xl p-5 bg-stone-50 space-y-4">
-                                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-stone-200 pb-3">
-                                    <div>
-                                      <span className="text-[9px] font-extrabold text-amber-600 uppercase tracking-widest block">Order ID</span>
-                                      <span className="font-mono font-bold text-emerald-800 text-sm">{o.orderId}</span>
-                                      <span className="block text-[10px] text-stone-400 mt-0.5">{o.date}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <select
-                                        value={o.status}
-                                        onChange={(e) => updateOrderStatus(o.orderId, e.target.value)}
-                                        className="px-3 py-1.5 text-xs font-bold rounded-lg border border-stone-300 bg-white"
-                                      >
-                                        <option value="Awaiting Shipment">Awaiting Shipment</option>
-                                        <option value="Packed">Packed</option>
-                                        <option value="Out for Delivery">Out for Delivery</option>
-                                        <option value="Delivered">Delivered</option>
-                                        <option value="Cancelled">Cancelled</option>
-                                      </select>
-                                      <button
-                                        onClick={() => {
-                                          if (window.confirm(`Delete order ${o.orderId}?`)) deleteOrder(o.orderId);
-                                        }}
-                                        className="p-2 text-stone-400 hover:text-red-600 transition-colors"
-                                        title="Delete order"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  <div className="space-y-2">
-                                    {(o.items || []).map((it, idx) => (
-                                      <div key={`${o.orderId}-${idx}`} className="flex items-center justify-between text-xs bg-white p-2 rounded-lg border border-stone-100">
-                                        <span className="flex-grow min-w-0 truncate">
-                                          <span className="font-bold text-stone-800">{it.name}</span>
-                                          <span className="text-stone-400 ml-2">({it.chosenWeight})</span>
-                                        </span>
-                                        <span className="text-stone-500 mx-3">x{it.quantity}</span>
-                                        <span className="font-bold text-emerald-800">₹{it.price * it.quantity}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-
-                                  <div className="flex items-center justify-between pt-2 border-t border-stone-200 text-xs">
-                                    <span className="text-stone-500">Subtotal: ₹{o.total} · GST 5%: ₹{Math.round(o.total * 0.05)}</span>
-                                    <span className="font-bold text-stone-900">Total: ₹{o.total + Math.round(o.total * 0.05)}</span>
-                                  </div>
-                                </div>
-                              ))}
                             </div>
                           )}
                         </div>
@@ -2223,37 +2307,75 @@ export default function App() {
                                 </div>
 
                                 <div className="md:col-span-2">
-                                  <label className="block text-xs font-bold text-stone-600 mb-1">Select / Upload Photo *</label>
+                                  <label className="block text-xs font-bold text-stone-600 mb-1">Product Photos * <span className="text-stone-400 font-normal">(add multiple — first one is the cover)</span></label>
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-white p-4 border border-stone-200 rounded-xl">
                                     <div>
-                                      <span className="block text-[11px] font-bold text-stone-500 mb-1">Option A: Local Device Sourcing</span>
+                                      <span className="block text-[11px] font-bold text-stone-500 mb-1">Option A: Upload from device (multiple)</span>
                                       <label className="flex flex-col items-center justify-center py-4 px-3 border border-dashed border-stone-300 rounded-xl cursor-pointer hover:bg-stone-50 text-center">
                                         <Upload className="w-8 h-8 text-stone-400 mb-2" />
-                                        <span className="text-xs font-semibold text-emerald-800">Buffer File</span>
+                                        <span className="text-xs font-semibold text-emerald-800">Select Photos</span>
+                                        <span className="text-[10px] text-stone-400 mt-0.5">You can pick several at once</span>
                                         <input 
                                           type="file" 
                                           accept="image/*" 
+                                          multiple
                                           className="hidden" 
                                           onChange={(e) => handlePhotoUpload(e, 'product')}
                                         />
                                       </label>
                                     </div>
                                     <div>
-                                      <span className="block text-[11px] font-bold text-stone-500 mb-1">Option B: Direct Photo URL</span>
-                                      <input 
-                                        type="text"
-                                        value={prodForm.image}
-                                        onChange={(e) => setProdForm({...prodForm, image: e.target.value})}
-                                        placeholder="https://images.unsplash.com/..."
-                                        className="w-full px-3 py-2.5 bg-stone-50 border border-stone-200 rounded-lg text-xs outline-none"
-                                      />
+                                      <span className="block text-[11px] font-bold text-stone-500 mb-1">Option B: Add by photo URL</span>
+                                      <div className="flex gap-2">
+                                        <input 
+                                          type="text"
+                                          value={prodForm.imageUrlInput || ''}
+                                          onChange={(e) => setProdForm({...prodForm, imageUrlInput: e.target.value})}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              addProductImageUrl(prodForm.imageUrlInput);
+                                              setProdForm(prev => ({ ...prev, imageUrlInput: '' }));
+                                            }
+                                          }}
+                                          placeholder="https://images.unsplash.com/..."
+                                          className="flex-grow px-3 py-2.5 bg-stone-50 border border-stone-200 rounded-lg text-xs outline-none"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            addProductImageUrl(prodForm.imageUrlInput);
+                                            setProdForm(prev => ({ ...prev, imageUrlInput: '' }));
+                                          }}
+                                          className="px-3 py-2 bg-emerald-800 text-white rounded-lg text-xs font-bold hover:bg-emerald-950 shrink-0"
+                                        >
+                                          Add
+                                        </button>
+                                      </div>
                                     </div>
                                   </div>
 
-                                  {prodForm.image && (
-                                    <div className="mt-3 p-3 bg-stone-100 border rounded-xl flex items-center space-x-3">
-                                      <img src={prodForm.image} alt="Preview" className="w-12 h-12 rounded object-cover bg-white" />
-                                      <span className="text-xs text-green-700 font-semibold">SKU Illustration processed successfully. ✅</span>
+                                  {(prodForm.images && prodForm.images.length > 0) && (
+                                    <div className="mt-3">
+                                      <span className="block text-[11px] font-bold text-stone-500 mb-2">{prodForm.images.length} photo(s) attached</span>
+                                      <div className="flex flex-wrap gap-3">
+                                        {prodForm.images.map((img, idx) => (
+                                          <div key={`${idx}-${img.slice(0, 24)}`} className="relative group">
+                                            <img src={img} alt={`Photo ${idx + 1}`} className="w-20 h-20 rounded-lg object-cover border border-stone-200 bg-white" />
+                                            {idx === 0 && (
+                                              <span className="absolute bottom-0 inset-x-0 bg-emerald-800/90 text-white text-[8px] font-bold uppercase text-center py-0.5 rounded-b-lg">Cover</span>
+                                            )}
+                                            <button
+                                              type="button"
+                                              onClick={() => removeProductImage(idx)}
+                                              className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full p-1 shadow hover:bg-red-700"
+                                              title="Remove photo"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        ))}
+                                      </div>
                                     </div>
                                   )}
                                 </div>
@@ -2319,7 +2441,7 @@ export default function App() {
                                       setEditingProductId(null);
                                       setProdForm({ 
                                         name: '', category: categories[0] || 'Sugar', weight: '1kg', weightOptionsInput: '500g, 1kg, 5kg',
-                                        description: '', price: '', oldPrice: '', stock: 100, image: '', isFeatured: false, isVisible: true, tag: '' 
+                                        description: '', price: '', oldPrice: '', stock: 100, image: '', images: [], isFeatured: false, isVisible: true, tag: '' 
                                       });
                                     }}
                                     className="px-5 py-2 bg-stone-300 text-stone-700 rounded-lg text-xs font-bold hover:bg-stone-400"
@@ -2671,39 +2793,25 @@ export default function App() {
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t">
-                              <div className="flex items-center justify-between p-3 bg-stone-50 border rounded-xl">
-                                <div>
-                                  <span className="block text-xs font-bold text-stone-900">E-Commerce Ready Cart</span>
-                                  <span className="text-[10px] text-stone-400">Activates online mock Razorpay pay checkouts</span>
-                                </div>
-                                <input 
-                                  type="checkbox"
-                                  checked={settings.ecommerceActive}
-                                  onChange={(e) => setSettings({...settings, ecommerceActive: e.target.checked})}
-                                  className="rounded text-emerald-800"
-                                />
-                              </div>
-
-                              <div className="flex items-center justify-between p-3 bg-stone-50 border rounded-xl">
-                                <div>
-                                  <span className="block text-xs font-bold text-stone-900">Show Prices to Public</span>
-                                  <span className="text-[10px] text-stone-400">If checked, prices display. If unchecked, changes to 'Inquire for Quote'.</span>
-                                </div>
-                                <input 
-                                  type="checkbox"
-                                  checked={settings.displayPublicPrices}
-                                  onChange={(e) => setSettings({...settings, displayPublicPrices: e.target.checked})}
-                                  className="rounded text-emerald-800"
-                                />
-                              </div>
-                            </div>
-
                           </div>
 
                           <div className="pt-4 border-t flex flex-wrap items-center gap-3">
                             <button
-                              onClick={() => triggerToast("All settings auto-saved to your browser storage.")}
+                              onClick={async () => {
+                                if (backendOnline && settingsId) {
+                                  try {
+                                    const saved = await api.updateSettings(settingsId, settings);
+                                    const { _id, ...rest } = saved;
+                                    setSettings((prev) => ({ ...prev, ...rest }));
+                                    triggerToast("Settings saved to database!");
+                                    return;
+                                  } catch (err) {
+                                    triggerToast(`Save failed: ${err.message}`, "error");
+                                    return;
+                                  }
+                                }
+                                triggerToast("Settings saved to your browser storage.");
+                              }}
                               className="px-6 py-2 bg-emerald-800 text-white font-bold rounded-lg text-xs uppercase"
                             >
                               Confirm Settings
@@ -2856,7 +2964,15 @@ export default function App() {
 
                                   <div className="flex justify-end space-x-2 pt-2">
                                     <button 
-                                      onClick={() => {
+                                      onClick={async () => {
+                                        if (backendOnline) {
+                                          try {
+                                            await api.markEnquiryContacted(e.id);
+                                          } catch (err) {
+                                            triggerToast(`Update failed: ${err.message}`, "error");
+                                            return;
+                                          }
+                                        }
                                         setEnquiries(enquiries.map(item => item.id === e.id ? { ...item, status: "Contacted" } : item));
                                         triggerToast(`Status synced for ${e.name}`);
                                       }}
@@ -2920,51 +3036,51 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* SUB-TAB: ANALYTICS — REAL NUMBERS FROM LIVE STATE */}
+                      {/* SUB-TAB: ANALYTICS — CATALOG + ENQUIRY METRICS FROM LIVE STATE */}
                       {activeAdminTab === 'analytics' && (
                         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-stone-200 space-y-6">
-                          <h3 className="text-base font-bold text-stone-900">Live Platform Analytics</h3>
-                          <p className="text-xs text-stone-400">Computed in real-time from your products, orders, and enquiries.</p>
+                          <h3 className="text-base font-bold text-stone-900">Live Catalog Analytics</h3>
+                          <p className="text-xs text-stone-400">Computed in real-time from your products, categories and enquiries.</p>
 
                           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl">
-                              <span className="text-[10px] text-emerald-800 font-bold block uppercase tracking-wider">Gross Revenue</span>
-                              <span className="text-2xl font-serif font-bold text-stone-900">₹{analytics.grossWithTax}</span>
-                              <span className="text-[9px] text-green-700 block mt-1">{orders.length} orders incl. 5% GST</span>
+                              <span className="text-[10px] text-emerald-800 font-bold block uppercase tracking-wider">Total Products</span>
+                              <span className="text-2xl font-serif font-bold text-stone-900">{analytics.totalProducts}</span>
+                              <span className="text-[9px] text-green-700 block mt-1">{analytics.visibleProducts} visible on site</span>
                             </div>
 
                             <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl">
-                              <span className="text-[10px] text-amber-800 font-bold block uppercase tracking-wider">Pending Dispatch</span>
-                              <span className="text-2xl font-serif font-bold text-stone-900">{analytics.ordersByStatus['Awaiting Shipment'] || 0}</span>
-                              <span className="text-[9px] text-amber-700 block mt-1">Orders awaiting shipment</span>
+                              <span className="text-[10px] text-amber-800 font-bold block uppercase tracking-wider">Categories</span>
+                              <span className="text-2xl font-serif font-bold text-stone-900">{categories.length}</span>
+                              <span className="text-[9px] text-amber-700 block mt-1">{analytics.featuredProducts} featured</span>
                             </div>
 
                             <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl">
-                              <span className="text-[10px] text-blue-800 font-bold block uppercase tracking-wider">B2B Enquiries</span>
+                              <span className="text-[10px] text-blue-800 font-bold block uppercase tracking-wider">Enquiries</span>
                               <span className="text-2xl font-serif font-bold text-stone-900">{enquiries.length}</span>
                               <span className="text-[9px] text-blue-700 block mt-1">{analytics.pendingEnquiries} pending follow-up</span>
                             </div>
 
                             <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl">
-                              <span className="text-[10px] text-rose-800 font-bold block uppercase tracking-wider">Active SKUs</span>
-                              <span className="text-2xl font-serif font-bold text-stone-900">{products.filter(p => p.isVisible).length}</span>
-                              <span className="text-[9px] text-rose-700 block mt-1">{analytics.lowStock.length} low-stock</span>
+                              <span className="text-[10px] text-rose-800 font-bold block uppercase tracking-wider">Low Stock</span>
+                              <span className="text-2xl font-serif font-bold text-stone-900">{analytics.lowStock.length}</span>
+                              <span className="text-[9px] text-rose-700 block mt-1">SKUs below 50 units</span>
                             </div>
                           </div>
 
-                          {/* Order status breakdown */}
+                          {/* Products by category */}
                           <div className="p-6 bg-stone-50 border rounded-2xl">
-                            <span className="text-[11px] font-bold text-stone-500 uppercase block mb-4">Orders by Status</span>
-                            {orders.length === 0 ? (
-                              <p className="text-xs text-stone-400 text-center py-6">No orders to chart yet.</p>
+                            <span className="text-[11px] font-bold text-stone-500 uppercase block mb-4">Products by Category</span>
+                            {Object.keys(analytics.productsByCategory).length === 0 ? (
+                              <p className="text-xs text-stone-400 text-center py-6">No products to chart yet.</p>
                             ) : (
                               <div className="space-y-2">
-                                {Object.entries(analytics.ordersByStatus).map(([status, count]) => {
-                                  const max = Math.max(...Object.values(analytics.ordersByStatus));
+                                {Object.entries(analytics.productsByCategory).map(([cat, count]) => {
+                                  const max = Math.max(...Object.values(analytics.productsByCategory));
                                   const widthPct = (count / max) * 100;
                                   return (
-                                    <div key={status} className="flex items-center text-xs">
-                                      <span className="w-40 shrink-0 font-semibold text-stone-700">{status}</span>
+                                    <div key={cat} className="flex items-center text-xs">
+                                      <span className="w-40 shrink-0 font-semibold text-stone-700">{cat}</span>
                                       <div className="flex-grow bg-white border border-stone-200 rounded-full overflow-hidden h-5 relative">
                                         <div
                                           className="h-full bg-emerald-700 rounded-full"
@@ -2979,20 +3095,17 @@ export default function App() {
                             )}
                           </div>
 
-                          {/* Top selling products */}
+                          {/* Enquiries by status */}
                           <div className="p-6 bg-stone-50 border rounded-2xl">
-                            <span className="text-[11px] font-bold text-stone-500 uppercase block mb-4">Top Selling Products</span>
-                            {analytics.topProducts.length === 0 ? (
-                              <p className="text-xs text-stone-400 text-center py-6">No product sales yet.</p>
+                            <span className="text-[11px] font-bold text-stone-500 uppercase block mb-4">Enquiries by Status</span>
+                            {Object.keys(analytics.enquiriesByStatus).length === 0 ? (
+                              <p className="text-xs text-stone-400 text-center py-6">No enquiries yet.</p>
                             ) : (
                               <ul className="space-y-2">
-                                {analytics.topProducts.map(([name, qty], idx) => (
-                                  <li key={name} className="flex items-center justify-between text-xs bg-white p-3 rounded-lg border border-stone-100">
-                                    <span className="flex items-center space-x-2 min-w-0">
-                                      <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 font-bold flex items-center justify-center text-[10px]">{idx + 1}</span>
-                                      <span className="text-stone-700 truncate">{name}</span>
-                                    </span>
-                                    <span className="font-bold text-emerald-800 shrink-0">{qty} units</span>
+                                {Object.entries(analytics.enquiriesByStatus).map(([status, count]) => (
+                                  <li key={status} className="flex items-center justify-between text-xs bg-white p-3 rounded-lg border border-stone-100">
+                                    <span className="font-semibold text-stone-700">{status}</span>
+                                    <span className="font-bold text-emerald-800">{count}</span>
                                   </li>
                                 ))}
                               </ul>
@@ -3175,12 +3288,38 @@ export default function App() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               
-              <div className="rounded-2xl overflow-hidden border border-stone-200 bg-white h-52 md:h-full">
-                <img 
-                  src={selectedProductDetails.image} 
-                  alt={selectedProductDetails.name} 
-                  className="w-full h-full object-cover"
-                />
+              <div className="space-y-3">
+                {(() => {
+                  const gallery = (selectedProductDetails.images && selectedProductDetails.images.length)
+                    ? selectedProductDetails.images
+                    : (selectedProductDetails.image ? [selectedProductDetails.image] : []);
+                  const activeIdx = Math.min(quickViewImageIndex, gallery.length - 1);
+                  return (
+                    <>
+                      <div className="rounded-2xl overflow-hidden border border-stone-200 bg-white h-52 md:h-72">
+                        <img 
+                          src={gallery[activeIdx] || selectedProductDetails.image} 
+                          alt={selectedProductDetails.name} 
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      {gallery.length > 1 && (
+                        <div className="flex flex-wrap gap-2">
+                          {gallery.map((img, idx) => (
+                            <button
+                              key={`${idx}-${img.slice(0, 24)}`}
+                              type="button"
+                              onClick={() => setQuickViewImageIndex(idx)}
+                              className={`w-14 h-14 rounded-lg overflow-hidden border-2 transition-all ${idx === activeIdx ? 'border-emerald-700 ring-2 ring-emerald-200' : 'border-stone-200 hover:border-stone-300'}`}
+                            >
+                              <img src={img} alt={`View ${idx + 1}`} className="w-full h-full object-cover" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="space-y-4">
@@ -3201,38 +3340,18 @@ export default function App() {
                   <p className="text-stone-700 font-semibold">Moisture Sealed Multi-layered Pack - {selectedProductDetails.weight}</p>
                 </div>
 
-                <div className="flex items-center justify-between pt-4">
-                  <div>
-                    {settings.displayPublicPrices ? (
-                      <span className="text-emerald-800 text-2xl font-black">₹{selectedProductDetails.price}</span>
-                    ) : (
-                      <span className="text-emerald-800 text-xs font-bold">Inquire Pricing</span>
-                    )}
-                  </div>
-
-                  {settings.ecommerceActive ? (
-                    <button 
-                      onClick={() => {
-                        addToCart(selectedProductDetails);
-                        setSelectedProductDetails(null);
-                      }}
-                      className="bg-emerald-800 hover:bg-emerald-950 text-white font-bold px-5 py-2.5 rounded-xl text-xs uppercase"
-                    >
-                      Confirm Add
-                    </button>
-                  ) : (
-                    <button 
-                      onClick={() => {
-                        setContactType('Inquiry');
-                        setContactMessage(`Enquiring about bulk delivery and pricing quotes for ${selectedProductDetails.name}.`);
-                        setSelectedProductDetails(null);
-                        setCurrentPage('contact');
-                      }}
-                      className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-bold px-5 py-2.5 rounded-xl text-xs uppercase"
-                    >
-                      Inquire Quote
-                    </button>
-                  )}
+                <div className="pt-4">
+                  <button 
+                    onClick={() => {
+                      setContactType('Inquiry');
+                      setContactMessage(`Enquiring about bulk delivery and details for ${selectedProductDetails.name}.`);
+                      setSelectedProductDetails(null);
+                      setCurrentPage('contact');
+                    }}
+                    className="w-full bg-emerald-800 hover:bg-emerald-950 text-white font-bold px-5 py-3 rounded-xl text-xs uppercase tracking-wider"
+                  >
+                    Enquire Now
+                  </button>
                 </div>
 
               </div>
