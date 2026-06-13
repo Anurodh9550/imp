@@ -59,6 +59,7 @@ const initialProducts = [
     weight: "1kg",
     weights: ["500g", "1kg", "5kg"],
     description: "Sulphur-free, double-refined premium crystal sugar made from the finest handpicked Indian sugarcane. Dissolves instantly and ensures 100% purity in every spoon.",
+    ingredients: "100% Refined Sugar",
     price: 64,
     oldPrice: 75,
     stock: 250,
@@ -76,6 +77,7 @@ const initialProducts = [
     weight: "1kg",
     weights: ["1kg", "2kg"],
     description: "Rich in natural molasses, organic brown sugar offering a subtle caramel flavour. Healthy alternative with zero artificial additives, perfect for premium baking and daily brewing.",
+    ingredients: "100% Natural Raw Brown Sugar",
     price: 95,
     oldPrice: 110,
     stock: 120,
@@ -93,6 +95,7 @@ const initialProducts = [
     weight: "500g",
     weights: ["500g", "1kg"],
     description: "Delicately flattened high-yield rice flakes. Specially processed for traditional Maharashtrian Kanda Poha and light breakfast roasted snacks.",
+    ingredients: "Flattened Rice (Rice)",
     price: 48,
     oldPrice: 55,
     stock: 180,
@@ -110,6 +113,7 @@ const initialProducts = [
     weight: "1kg",
     weights: ["500g", "1kg", "2kg"],
     description: "Ideally textured flattened rice flakes with high nutrient retention. Holds water perfectly without getting mushy. Great for balanced, wholesome family breakfasts.",
+    ingredients: "Flattened Rice (Rice)",
     price: 55,
     oldPrice: 65,
     stock: 300,
@@ -127,6 +131,7 @@ const initialProducts = [
     weight: "1kg",
     weights: ["1kg", "5kg"],
     description: "Thick, nutrient-dense flattened rice. Perfect for deep-frying into crispy Indori Poha, savory Chivda mixes, or healthy traditional steaming.",
+    ingredients: "Flattened Rice (Rice)",
     price: 58,
     oldPrice: 70,
     stock: 150,
@@ -220,6 +225,13 @@ const defaultSettings = {
     "We understand what makes a perfect batch. For our Poha, we select high-quality paddy grains to give you that authentic texture and lightness that central India loves. For our Sugar, we ensure sparkling, high-grade crystals that dissolve perfectly without any impurities.",
   aboutP3:
     "What sets IMPAL apart is our strict focus on modern, untouched-by-hand packaging and rigorous quality checks. We bridge the gap between the finest fields and your modern kitchen, ensuring that every sealed pouch of IMPAL Sugar and Poha brings health, hygiene, and happiness to your family.",
+  mission:
+    "To deliver pure, hygienic, and high-quality food essentials that bring trust, health, and satisfaction to every household at an affordable value.",
+  vision:
+    "To become a trusted and recognized food brand in India by consistently delivering purity, quality, and excellence in every product.",
+  established: "2026",
+  fssai: "FSSAI Verified Company",
+  businessHours: "Monday – Saturday: 9:00 AM – 7:00 PM\nSunday: Closed",
   metaTitle: "Impal Food | Premium Sugar & Poha Supplier in India",
   metaDesc: "Discover the pure, chemical-free goodness of Impal Premium Crystal Sugar and the traditional fluffy texture of Impal Poha. Hygienically packaged.",
   metaKeywords: "Sulphur free sugar, pure crystal sugar, premium poha, organic brown sugar, kanda poha, Indori poha wholesale",
@@ -296,6 +308,7 @@ export default function App() {
     weight: '1kg', 
     weightOptionsInput: '500g, 1kg, 5kg',
     description: '', 
+    ingredients: '',
     price: '', 
     oldPrice: '', 
     stock: 100, 
@@ -501,6 +514,23 @@ export default function App() {
     setQuickViewImageIndex(0);
   }, [selectedProductDetails]);
 
+  // Backfill any newly-added default settings keys that older persisted
+  // settings (localStorage / backend) may be missing, so new sections render.
+  useEffect(() => {
+    setSettings((prev) => {
+      const merged = { ...prev };
+      let changed = false;
+      for (const k of Object.keys(defaultSettings)) {
+        if (merged[k] === undefined || merged[k] === null || merged[k] === '') {
+          merged[k] = defaultSettings[k];
+          changed = true;
+        }
+      }
+      return changed ? merged : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleAdminLogout = () => {
     api.logout();
     setIsAdminAuthenticated(false);
@@ -529,6 +559,7 @@ export default function App() {
       weight: parsedWeights[0] || prodForm.weight,
       weights: parsedWeights,
       description: prodForm.description,
+      ingredients: prodForm.ingredients,
       price: parsedPrice,
       oldPrice: parsedOldPrice || null,
       stock: parseInt(prodForm.stock),
@@ -582,7 +613,7 @@ export default function App() {
     setEditingProductId(null);
     setProdForm({ 
       name: '', category: categories[0] || 'Sugar', weight: '1kg', weightOptionsInput: '500g, 1kg, 5kg',
-      description: '', price: '', oldPrice: '', stock: 100, image: '', images: [], isFeatured: false, isVisible: true, tag: '' 
+      description: '', ingredients: '', price: '', oldPrice: '', stock: 100, image: '', images: [], isFeatured: false, isVisible: true, tag: '' 
     });
   };
 
@@ -594,6 +625,7 @@ export default function App() {
       weight: p.weight,
       weightOptionsInput: (p.weights || [p.weight]).join(', '),
       description: p.description,
+      ingredients: p.ingredients || '',
       price: p.price,
       oldPrice: p.oldPrice || '',
       stock: p.stock,
@@ -970,6 +1002,9 @@ export default function App() {
               <button onClick={() => setCurrentPage('products')} className={`font-medium text-sm tracking-wide transition-all ${currentPage === 'products' ? 'text-emerald-800 font-bold border-b-2 border-amber-500' : 'text-stone-600 hover:text-emerald-800'}`}>
                 {languagePref === 'bilingual' ? 'उत्पाद सूची / Our Products' : 'Our Products'}
               </button>
+              <button onClick={() => setCurrentPage('quality')} className={`font-medium text-sm tracking-wide transition-all ${currentPage === 'quality' ? 'text-emerald-800 font-bold border-b-2 border-amber-500' : 'text-stone-600 hover:text-emerald-800'}`}>
+                {languagePref === 'bilingual' ? 'गुणवत्ता / Quality' : 'Quality'}
+              </button>
               <button onClick={() => setCurrentPage('contact')} className={`font-medium text-sm tracking-wide transition-all ${currentPage === 'contact' ? 'text-emerald-800 font-bold border-b-2 border-amber-500' : 'text-stone-600 hover:text-emerald-800'}`}>
                 {languagePref === 'bilingual' ? 'संपर्क / Contact' : 'Contact Us'}
               </button>
@@ -1025,6 +1060,7 @@ export default function App() {
             <button onClick={() => { setCurrentPage('home'); setIsMobileMenuOpen(false); }} className="block w-full text-left py-2 px-3 rounded hover:bg-stone-50 text-stone-800 font-medium">Home</button>
             <button onClick={() => { setCurrentPage('about'); setIsMobileMenuOpen(false); }} className="block w-full text-left py-2 px-3 rounded hover:bg-stone-50 text-stone-800 font-medium">About Us</button>
             <button onClick={() => { setCurrentPage('products'); setIsMobileMenuOpen(false); }} className="block w-full text-left py-2 px-3 rounded hover:bg-stone-50 text-stone-800 font-medium">Our Products</button>
+            <button onClick={() => { setCurrentPage('quality'); setIsMobileMenuOpen(false); }} className="block w-full text-left py-2 px-3 rounded hover:bg-stone-50 text-stone-800 font-medium">Quality</button>
             <button onClick={() => { setCurrentPage('contact'); setIsMobileMenuOpen(false); }} className="block w-full text-left py-2 px-3 rounded hover:bg-stone-50 text-stone-800 font-medium">Contact Us</button>
             <div className="pt-2 border-t border-stone-100 flex flex-col space-y-2">
               <button 
@@ -1281,9 +1317,6 @@ export default function App() {
                 {/* Product Grid */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
                   {filteredProducts.slice(0, 8).map((p) => {
-                    const availableWeights = p.weights || [p.weight];
-                    const selectedWeight = selectedCardWeights[p.id] || p.weight || availableWeights[0];
-
                     return (
                       <div 
                         key={p.id}
@@ -1320,27 +1353,6 @@ export default function App() {
                               {p.name}
                             </h3>
                             <p className="text-[11px] text-stone-500 mt-2 line-clamp-2 leading-normal">{p.description}</p>
-                            
-                            {/* Dynamic Weight Selectors */}
-                            <div className="mt-3">
-                              <span className="block text-[10px] text-stone-400 font-bold mb-1">CHOOSE WEIGHT PACK:</span>
-                              <div className="flex flex-wrap gap-1">
-                                {availableWeights.map((w) => (
-                                  <button
-                                    key={w}
-                                    type="button"
-                                    onClick={() => setSelectedCardWeights(prev => ({ ...prev, [p.id]: w }))}
-                                    className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-all ${
-                                      selectedWeight === w 
-                                        ? 'bg-emerald-50 border-emerald-800 text-emerald-900 font-bold' 
-                                        : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-50'
-                                    }`}
-                                  >
-                                    {w}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
                           </div>
 
                           <div className="mt-4 pt-3 border-t border-stone-200/50">
@@ -1641,9 +1653,85 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+
+                {/* Mission & Vision */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-20">
+                  <div className="bg-emerald-900 rounded-3xl p-8 md:p-10 text-white relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl"></div>
+                    <div className="text-3xl mb-4">🎯</div>
+                    <h3 className="text-xl font-serif font-bold text-amber-300 mb-3">Our Mission</h3>
+                    <p className="text-sm text-emerald-50 leading-relaxed font-light whitespace-pre-line">{settings.mission}</p>
+                  </div>
+                  <div className="bg-amber-500 rounded-3xl p-8 md:p-10 text-white relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
+                    <div className="text-3xl mb-4">🌟</div>
+                    <h3 className="text-xl font-serif font-bold text-white mb-3">Our Vision</h3>
+                    <p className="text-sm text-amber-50 leading-relaxed font-light whitespace-pre-line">{settings.vision}</p>
+                  </div>
+                </div>
               </div>
             </section>
 
+          </div>
+        )}
+
+        {/* ==================== QUALITY / CERTIFICATIONS PAGE ==================== */}
+        {currentPage === 'quality' && (
+          <div className="animate-fadeIn">
+            <div className="bg-emerald-900 text-white py-16 text-center relative overflow-hidden">
+              <div className="absolute inset-0 opacity-15">
+                <img
+                  src="https://images.unsplash.com/photo-1581093588401-fbb62a02f120?auto=format&fit=crop&q=80&w=1200"
+                  alt="Quality"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="relative z-10 max-w-4xl mx-auto px-4">
+                <h1 className="text-3xl md:text-4xl font-serif font-bold">Quality &amp; Certifications</h1>
+                <p className="text-xs text-emerald-100 mt-2 max-w-xl mx-auto">Our commitment to purity, hygiene and safety in every batch.</p>
+              </div>
+            </div>
+
+            <section className="py-20 bg-stone-50">
+              <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+
+                {/* FSSAI badge */}
+                <div className="bg-white rounded-3xl border-2 border-amber-400 p-10 text-center shadow-sm">
+                  <div className="text-6xl mb-4">🏅</div>
+                  <h2 className="text-2xl md:text-3xl font-serif font-bold text-amber-600 mb-3">{settings.fssai}</h2>
+                  <p className="text-sm text-stone-500 max-w-xl mx-auto leading-relaxed">
+                    Impal Food is officially verified by the Food Safety and Standards Authority of India (FSSAI), ensuring all products meet the highest national food safety standards.
+                  </p>
+                </div>
+
+                {/* Standards grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {[
+                    ["🧼", "Hygienic Processing", "Our facility follows strict cleanliness protocols at every stage of production."],
+                    ["🔍", "Quality Checks", "Multi-stage quality inspection ensures only the best products reach you."],
+                    ["📦", "Safe Packaging", "Food-grade, tamper-proof packaging protects freshness and purity."],
+                    ["🌾", "Certified Handling", "Every step of our process follows certified food-grade handling standards."],
+                    ["🏭", "Modern Facility", "State-of-the-art processing equipment for consistent, reliable quality."],
+                    ["📋", "Full Documentation", "Complete traceability and documentation for every single batch."],
+                  ].map(([icon, title, desc]) => (
+                    <div key={title} className="bg-white border border-stone-200 rounded-2xl p-6 text-center">
+                      <div className="text-3xl mb-3">{icon}</div>
+                      <div className="font-bold text-emerald-800 text-sm mb-2">{title}</div>
+                      <p className="text-xs text-stone-500 leading-relaxed">{desc}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Quality promise */}
+                <div className="bg-emerald-900 rounded-3xl p-10 text-center">
+                  <h3 className="text-2xl font-serif font-bold text-white mb-3">Our Quality Promise</h3>
+                  <p className="text-sm text-emerald-100 leading-relaxed max-w-2xl mx-auto font-light">
+                    Every product that leaves our facility has passed through rigorous quality checks. We believe purity isn&apos;t just a value — it&apos;s a promise we keep with every package we deliver.
+                  </p>
+                </div>
+
+              </div>
+            </section>
           </div>
         )}
 
@@ -1710,9 +1798,6 @@ export default function App() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
                   {filteredProducts.map((p) => {
-                    const availableWeights = p.weights || [p.weight];
-                    const selectedWeight = selectedCardWeights[p.id] || p.weight || availableWeights[0];
-
                     return (
                       <div 
                         key={p.id}
@@ -1749,26 +1834,13 @@ export default function App() {
                               {p.name}
                             </h3>
                             <p className="text-xs text-stone-500 leading-relaxed line-clamp-3 mt-2">{p.description}</p>
-                            
-                            <div className="mt-4">
-                              <span className="text-[10px] font-bold text-stone-400 block mb-1">Available Weight Options:</span>
-                              <div className="flex flex-wrap gap-1">
-                                {availableWeights.map((w) => (
-                                  <button
-                                    key={w}
-                                    type="button"
-                                    onClick={() => setSelectedCardWeights(prev => ({ ...prev, [p.id]: w }))}
-                                    className={`px-2.5 py-1 rounded text-xs font-semibold border transition-all ${
-                                      selectedWeight === w 
-                                        ? 'bg-emerald-50 border-emerald-800 text-emerald-900 font-bold' 
-                                        : 'bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100'
-                                    }`}
-                                  >
-                                    {w}
-                                  </button>
-                                ))}
+
+                            {p.ingredients && (
+                              <div className="mt-3 inline-flex items-center gap-1.5 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg">
+                                <span className="text-[11px] text-emerald-800 font-semibold">🌿 {p.ingredients}</span>
                               </div>
-                            </div>
+                            )}
+
                           </div>
 
                           <div className="pt-4 border-t border-stone-100">
@@ -1949,17 +2021,38 @@ export default function App() {
 
               </div>
 
-              {/* Dynamic Google Maps Segment */}
-              <div className="mt-12 bg-white p-4 rounded-3xl border border-stone-200 shadow-sm">
-                <h3 className="text-sm font-serif font-bold text-stone-900 mb-4 px-2">Warehouse & Mill Plant Location</h3>
-                <div className="h-64 rounded-2xl overflow-hidden bg-stone-100 relative">
-                  <iframe 
-                    title="Warehouse Map"
-                    src={settings.googleMapsEmbed}
-                    className="w-full h-full border-0"
-                    allowFullScreen=""
-                    loading="lazy"
-                  ></iframe>
+              {/* Map + Business Hours */}
+              <div className="mt-12 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 bg-white p-4 rounded-3xl border border-stone-200 shadow-sm">
+                  <h3 className="text-sm font-serif font-bold text-stone-900 mb-4 px-2">Warehouse & Mill Plant Location</h3>
+                  <div className="h-64 rounded-2xl overflow-hidden bg-stone-100 relative">
+                    <iframe 
+                      title="Warehouse Map"
+                      src={settings.googleMapsEmbed}
+                      className="w-full h-full border-0"
+                      allowFullScreen=""
+                      loading="lazy"
+                    ></iframe>
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
+                  <h3 className="text-sm font-serif font-bold text-stone-900 mb-4">Business Hours</h3>
+                  <div className="divide-y divide-stone-100">
+                    {(settings.businessHours || '').split('\n').filter(Boolean).map((line, idx) => {
+                      const [day, time] = line.split(':').length > 1 ? [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 1)] : [line, ''];
+                      return (
+                        <div key={idx} className="flex items-center justify-between py-3 text-xs">
+                          <span className="text-stone-500">{day.trim()}</span>
+                          <span className="font-semibold text-emerald-800">{time.trim()}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-4 bg-emerald-50 border border-emerald-100 rounded-xl p-3 flex items-center gap-2">
+                    <span className="text-base">✅</span>
+                    <span className="text-[11px] font-bold text-emerald-800">{settings.fssai}</span>
+                  </div>
                 </div>
               </div>
 
@@ -2390,6 +2483,17 @@ export default function App() {
                               </div>
 
                               <div>
+                                <label className="block text-xs font-bold text-stone-600 mb-1">Ingredients</label>
+                                <input
+                                  type="text"
+                                  value={prodForm.ingredients}
+                                  onChange={(e) => setProdForm({...prodForm, ingredients: e.target.value})}
+                                  placeholder="e.g. 100% Refined Sugar / Flattened Rice (Rice)"
+                                  className="w-full px-3 py-2 bg-white border border-stone-200 rounded-lg text-xs outline-none"
+                                />
+                              </div>
+
+                              <div>
                                 <label className="block text-xs font-bold text-stone-600 mb-1">Description Paragraph</label>
                                 <textarea 
                                   value={prodForm.description}
@@ -2414,7 +2518,7 @@ export default function App() {
                                       setEditingProductId(null);
                                       setProdForm({ 
                                         name: '', category: categories[0] || 'Sugar', weight: '1kg', weightOptionsInput: '500g, 1kg, 5kg',
-                                        description: '', price: '', oldPrice: '', stock: 100, image: '', images: [], isFeatured: false, isVisible: true, tag: '' 
+                                        description: '', ingredients: '', price: '', oldPrice: '', stock: 100, image: '', images: [], isFeatured: false, isVisible: true, tag: '' 
                                       });
                                     }}
                                     className="px-5 py-2 bg-stone-300 text-stone-700 rounded-lg text-xs font-bold hover:bg-stone-400"
@@ -3308,6 +3412,13 @@ export default function App() {
                   {selectedProductDetails.description}
                 </p>
 
+                {selectedProductDetails.ingredients && (
+                  <div className="pt-4 border-t text-xs">
+                    <span className="text-[10px] font-bold text-stone-400 uppercase block mb-1">Ingredients:</span>
+                    <p className="text-emerald-800 font-semibold">🌿 {selectedProductDetails.ingredients}</p>
+                  </div>
+                )}
+
                 <div className="pt-4 border-t text-xs">
                   <span className="text-[10px] font-bold text-stone-400 uppercase block mb-1">Standard Packaging Details:</span>
                   <p className="text-stone-700 font-semibold">Moisture Sealed Multi-layered Pack - {selectedProductDetails.weight}</p>
@@ -3476,6 +3587,7 @@ export default function App() {
                 <li><button onClick={() => setCurrentPage('home')} className="hover:text-amber-400 transition-colors">Home landing</button></li>
                 <li><button onClick={() => setCurrentPage('about')} className="hover:text-amber-400 transition-colors">About Sourcing</button></li>
                 <li><button onClick={() => setCurrentPage('products')} className="hover:text-amber-400 transition-colors">Product Store</button></li>
+                <li><button onClick={() => setCurrentPage('quality')} className="hover:text-amber-400 transition-colors">Quality &amp; Certifications</button></li>
                 <li><button onClick={() => setCurrentPage('contact')} className="hover:text-amber-400 transition-colors">Apply Distributorship</button></li>
               </ul>
             </div>
